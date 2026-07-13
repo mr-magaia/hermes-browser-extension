@@ -178,6 +178,21 @@ test('socket replacement coordinator resumes the durable profile session before 
   assert.equal(reanchored.sessionModelOptionBindings['stored-A'], undefined);
   assert.deepEqual(reanchored.sessionModelOptionBindings['stored-B'], { fastMode: true });
 
+  const preservedTarget = reanchorRemoteSessionBindings({
+    fromId: 'stored-A',
+    toId: 'stored-B',
+    sessionModelBindings: {
+      'stored-A': { modelId: 'stale-a' },
+      'stored-B': { modelId: 'acknowledged-b' },
+    },
+    sessionModelOptionBindings: {
+      'stored-A': { fastMode: true },
+      'stored-B': { fastMode: false },
+    },
+  });
+  assert.deepEqual(preservedTarget.sessionModelBindings['stored-B'], { modelId: 'acknowledged-b' });
+  assert.deepEqual(preservedTarget.sessionModelOptionBindings['stored-B'], { fastMode: false });
+
   const promptPending = replacementClient.request(WS_METHODS.promptSubmit, {
     session_id: resumed.liveId,
     text: 'continue',

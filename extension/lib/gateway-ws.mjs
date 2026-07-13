@@ -133,8 +133,8 @@ export function reanchorRemoteSessionBindings({
   }
   const nextModelBindings = { ...(sessionModelBindings || {}) };
   const nextOptionBindings = { ...(sessionModelOptionBindings || {}) };
-  if (nextModelBindings[previousId]) nextModelBindings[nextId] = nextModelBindings[previousId];
-  if (nextOptionBindings[previousId]) nextOptionBindings[nextId] = nextOptionBindings[previousId];
+  if (!nextModelBindings[nextId] && nextModelBindings[previousId]) nextModelBindings[nextId] = nextModelBindings[previousId];
+  if (!nextOptionBindings[nextId] && nextOptionBindings[previousId]) nextOptionBindings[nextId] = nextOptionBindings[previousId];
   delete nextModelBindings[previousId];
   delete nextOptionBindings[previousId];
   return {

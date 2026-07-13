@@ -1042,6 +1042,8 @@ test('connect and startup sync Hermes models, sessions, skills, and profiles fro
   assert.match(source, /readyPayload = await client\.connect\(wsUrl\);/);
   assert.match(source, /capabilities: \(readyPayload && typeof readyPayload\.capabilities === 'object' && readyPayload\.capabilities\) \|\| \{\}/);
   assert.match(source, /reanchorRemoteSessionBindings\(\{/);
+  assert.match(source, /assertRemoteProfileOperationCurrent\(profileRevision, profile\);/);
+  assert.match(source, /await saveSessionBindingForActiveScope\(resumedSession\);/);
   assert.doesNotMatch(source, /connection\.wsSessionId = session\.id;/);
   assert.doesNotMatch(source, /WS_METHODS\.sessionList,\s*withGatewayProfile\(/);
   assert.doesNotMatch(source, /WS_METHODS\.promptSubmit,\s*withGatewayProfile\(/);

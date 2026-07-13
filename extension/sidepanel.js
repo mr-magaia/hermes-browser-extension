@@ -401,6 +401,7 @@ let activeSessionRuntime = {
 // cross-origin). This holds the live socket + the dashboard-assigned session id.
 let remoteWsConnection = null;
 let remoteProfilesBaseUrl = '';
+let remoteProfileRevision = 0;
 let trustedDashboardTabId = null;
 let connectionProbeStatus = 'connecting';
 let connectionProbeDetail = '';
@@ -1251,6 +1252,13 @@ function activeRemoteWsProfile() {
     verifiedBaseUrl: remoteProfilesBaseUrl,
     gatewayUrl: normalizeGatewayUrl(settings.gatewayUrl),
   });
+}
+
+function assertRemoteProfileOperationCurrent(revision, profile) {
+  const selected = String(settings.activeProfile || '').trim();
+  if (revision !== remoteProfileRevision || selected !== String(profile || '').trim()) {
+    throw new Error('The Hermes profile changed while this session operation was running. Try again with the current profile.');
+  }
 }
 
 async function ensureRemoteProfileSelection({ refresh = false } = {}) {
@@ -3847,6 +3855,7 @@ async function applySelectedProfile(profileName = '') {
       return false;
     }
   }
+  const profileChangeRevision = isRemoteWsMode() ? ++remoteProfileRevision : remoteProfileRevision;
   settings = {
     ...settings,
     activeProfile: selected,
@@ -3856,6 +3865,7 @@ async function applySelectedProfile(profileName = '') {
     } : {}),
   };
   await chrome.storage.local.set({ hermesBrowserSettings: settings });
+  if (isRemoteWsMode() && profileChangeRevision !== remoteProfileRevision) return false;
   if (isRemoteWsMode()) {
     els.sessionIdInput.value = settings.sessionId;
     els.sessionTitleInput.value = settings.sessionTitle;
@@ -3877,6 +3887,7 @@ async function applySelectedProfile(profileName = '') {
     activeSessionRuntime = { ...activeSessionRuntime, sessionId: '', usedTokens: 0, inputTokens: 0, outputTokens: 0, model: '', provider: '', source: '' };
     messages = [];
     await chrome.storage.local.set({ [activeMessagesStorageKey(previousConversationScope)]: [] });
+    if (profileChangeRevision !== remoteProfileRevision) return false;
     renderMessagesFromStorage();
     updateSessionLabel();
     renderSessionMenu();
@@ -4412,7 +4423,10 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
   const requestModel = preferredModel?.rawModelId || preferredBinding?.rawModelId || preferredBinding?.modelId || settings.model || DEFAULT_SETTINGS.model;
   const requestProvider = preferredModel?.provider || preferredBinding?.provider || '';
   if (isRemoteWsMode()) {
+    const profileRevision = remoteProfileRevision;
+    const expectedProfile = String(settings.activeProfile || '').trim();
     const profile = await ensureRemoteProfileSelection({ refresh: true });
+    assertRemoteProfileOperationCurrent(profileRevision, expectedProfile);
     const verifiedBaseUrl = normalizeGatewayUrl(settings.gatewayUrl);
     const connection = await ensureRemoteWsClient();
     if (connection.baseUrl !== verifiedBaseUrl) throw new Error('The dashboard changed before the profile session could be created. Try again.');
@@ -4434,6 +4448,7 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
     if (normalizeGatewayUrl(settings.gatewayUrl) !== connection.baseUrl) {
       throw new Error('The dashboard changed while the profile session was being created. Try again on the current dashboard.');
     }
+    assertRemoteProfileOperationCurrent(profileRevision, profile);
     connection.wsSessionId = liveId;
     connection.wsStoredSessionId = storedId;
     connection.wsProfile = profile;
@@ -4477,6 +4492,7 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
     activeSessionRuntime = { ...activeSessionRuntime, sessionId: storedId, usedTokens: 0, inputTokens: 0, outputTokens: 0, model: '', provider: '', source: '' };
     messages = [];
     await chrome.storage.local.set({ hermesBrowserSettings: settings, [activeMessagesStorageKey(previousConversationScope)]: [] });
+    assertRemoteProfileOperationCurrent(profileRevision, profile);
     await saveSessionBindingForActiveScope(session);
     renderMessagesFromStorage();
     updateSessionLabel();
@@ -4536,9 +4552,12 @@ async function openHermesSession(session) {
   const requestedSessionId = session.id;
   let liveSessionId = session.id;
   let openedSession = session;
+  const profileRevision = remoteProfileRevision;
+  const expectedProfile = String(settings.activeProfile || '').trim();
   if (isRemoteWsMode()) {
     try {
       const selectedProfile = await ensureRemoteProfileSelection({ refresh: true });
+      assertRemoteProfileOperationCurrent(profileRevision, expectedProfile);
       const verifiedBaseUrl = normalizeGatewayUrl(settings.gatewayUrl);
       const sessionProfile = sessionProfileForGateway(
         session,
@@ -4562,6 +4581,7 @@ async function openHermesSession(session) {
       if (normalizeGatewayUrl(settings.gatewayUrl) !== connection.baseUrl) {
         throw new Error('The dashboard changed while this session was being resumed. Try again on the current dashboard.');
       }
+      assertRemoteProfileOperationCurrent(profileRevision, sessionProfile);
       connection.wsSessionId = liveId;
       connection.wsStoredSessionId = storedId;
       connection.wsProfile = sessionProfile;
@@ -4613,6 +4633,7 @@ async function openHermesSession(session) {
   activeSessionRuntime = { ...activeSessionRuntime, sessionId: openedSession.id, usedTokens: 0, inputTokens: 0, outputTokens: 0, model: '', provider: '', source: '' };
   sessionRoutesAvailable = true;
   await chrome.storage.local.set({ hermesBrowserSettings: settings });
+  if (isRemoteWsMode()) assertRemoteProfileOperationCurrent(profileRevision, expectedProfile);
   await saveSessionBindingForActiveScope(openedSession);
   updateSessionLabel();
   renderSessionMenu();
@@ -6317,7 +6338,10 @@ async function ensureRemoteWsSession(connection) {
     const selected = String(settings.activeProfile || '').trim();
     if (connection.wsProfile === selected) return connection.wsSessionId;
   }
+  const profileRevision = remoteProfileRevision;
+  const expectedProfile = String(settings.activeProfile || '').trim();
   const profile = await ensureRemoteProfileSelection({ refresh: true });
+  assertRemoteProfileOperationCurrent(profileRevision, expectedProfile);
   const verifiedBaseUrl = normalizeGatewayUrl(settings.gatewayUrl);
   if (connection.baseUrl !== verifiedBaseUrl) throw new Error('The dashboard changed before the profile session could be created. Try again.');
   await assertRemoteProfileSessionSupport(connection, profile);
@@ -6354,6 +6378,7 @@ async function ensureRemoteWsSession(connection) {
     const operation = established.action === 'resumed' ? 'resumed' : 'created';
     throw new Error(`The dashboard changed while the profile session was being ${operation}. Try again on the current dashboard.`);
   }
+  assertRemoteProfileOperationCurrent(profileRevision, profile);
   const { action, liveId, storedId } = established;
   if (action === 'resumed') {
     connection.wsSessionId = liveId;
@@ -6395,6 +6420,8 @@ async function ensureRemoteWsSession(connection) {
       }),
     };
     await chrome.storage.local.set({ hermesBrowserSettings: settings });
+    assertRemoteProfileOperationCurrent(profileRevision, profile);
+    await saveSessionBindingForActiveScope(resumedSession);
     updateSessionLabel();
     renderSessionMenu();
     return liveId;
