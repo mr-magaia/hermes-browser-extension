@@ -84,10 +84,12 @@ import {
   assertProfileSessionCapability,
   buildDashboardWsUrl,
   createGatewayClient,
+  establishGatewaySession,
   forgetRemoteSessionBinding,
   mergeRemoteSessionsForProfile,
   normalizeRemoteSessionBindings,
   rememberRemoteSessionBinding,
+  reanchorRemoteSessionBindings,
   remoteSessionIdentity,
   resolveVerifiedGatewayProfile,
   sessionProfileForGateway,
@@ -6172,25 +6174,76 @@ async function ensureRemoteWsSession(connection) {
   const verifiedBaseUrl = normalizeGatewayUrl(settings.gatewayUrl);
   if (connection.baseUrl !== verifiedBaseUrl) throw new Error('The dashboard changed before the profile session could be created. Try again.');
   await assertRemoteProfileSessionSupport(connection, profile);
+  const persistedSessionId = String(settings.sessionId || '').trim();
+  const persistedSession = availableSessions.find((session) => String(session?.id || '') === persistedSessionId);
+  const persistedProfile = sessionProfileForGateway(
+    persistedSession || { id: persistedSessionId },
+    settings.remoteSessionBindings,
+    verifiedBaseUrl,
+  );
   const binding = currentEffectiveModelBinding();
   const preferredOptions = preferredModelOptionsForNewSession();
-  const result = await connection.client.request(WS_METHODS.sessionCreate, withGatewayProfile({
-    title: settings.sessionTitle,
-    ...(profile ? {} : {
-      model: currentModelRequestId(),
-      provider: currentModelProviderSlug() || binding?.provider || undefined,
-    }),
-    reasoning_effort: preferredOptions.thinkingEnabled ? preferredOptions.reasoningEffort : 'none',
-    fast: preferredOptions.fastMode,
-  }, profile));
+  const established = await establishGatewaySession({
+    client: connection.client,
+    capabilities: connection.capabilities,
+    profile,
+    persistedSession,
+    persistedProfile,
+    createParams: {
+      title: settings.sessionTitle,
+      ...(profile ? {} : {
+        model: currentModelRequestId(),
+        provider: currentModelProviderSlug() || binding?.provider || undefined,
+      }),
+      reasoning_effort: preferredOptions.thinkingEnabled ? preferredOptions.reasoningEffort : 'none',
+      fast: preferredOptions.fastMode,
+    },
+  });
   if (normalizeGatewayUrl(settings.gatewayUrl) !== connection.baseUrl) {
-    throw new Error('The dashboard changed while the profile session was being created. Try again on the current dashboard.');
+    const operation = established.action === 'resumed' ? 'resumed' : 'created';
+    throw new Error(`The dashboard changed while the profile session was being ${operation}. Try again on the current dashboard.`);
   }
-  // Fail closed BEFORE adopting the session: a missing or mismatched profile
-  // ack means the dashboard may have scoped it to the launch profile.
-  assertGatewayProfileAck(result, profile);
-  const { liveId, storedId } = remoteSessionIdentity(result);
-  if (!liveId || !storedId) throw new Error('Dashboard did not return a session id.');
+  const { action, liveId, storedId } = established;
+  if (action === 'resumed') {
+    connection.wsSessionId = liveId;
+    connection.wsStoredSessionId = storedId;
+    connection.wsProfile = profile;
+
+    let resumedSession = { ...persistedSession, id: storedId, profile, gatewayUrl: connection.baseUrl };
+    let bindingState = {
+      remoteSessionBindings: settings.remoteSessionBindings,
+      sessionModelBindings: settings.sessionModelBindings,
+      sessionModelOptionBindings: settings.sessionModelOptionBindings,
+    };
+    if (storedId !== persistedSessionId) {
+      availableSessions = availableSessions.filter((session) => session.id !== persistedSessionId);
+      bindingState = reanchorRemoteSessionBindings({
+        fromId: persistedSessionId,
+        toId: storedId,
+        ...bindingState,
+      });
+    }
+    resumedSession = normalizeHermesSessions({ sessions: [resumedSession] })[0] || resumedSession;
+    availableSessions = normalizeHermesSessions({ sessions: [
+      resumedSession,
+      ...availableSessions.filter((session) => session.id !== storedId),
+    ] });
+    settings = {
+      ...settings,
+      sessionId: storedId,
+      sessionTitle: resumedSession.title || settings.sessionTitle,
+      sessionModelBindings: bindingState.sessionModelBindings,
+      sessionModelOptionBindings: bindingState.sessionModelOptionBindings,
+      remoteSessionBindings: rememberRemoteSessionBinding(bindingState.remoteSessionBindings, resumedSession, {
+        profile,
+        gatewayUrl: connection.baseUrl,
+      }),
+    };
+    await chrome.storage.local.set({ hermesBrowserSettings: settings });
+    updateSessionLabel();
+    renderSessionMenu();
+    return liveId;
+  }
   connection.wsSessionId = liveId;
   connection.wsStoredSessionId = storedId;
   connection.wsProfile = profile;

@@ -71,6 +71,78 @@ export function remoteSessionIdentity(result = {}, requestedId = '') {
   return { liveId, storedId };
 }
 
+export async function resumeGatewaySession({ client, storedSessionId = '', profile = '', capabilities = {} } = {}) {
+  const requestedId = String(storedSessionId || '').trim();
+  if (!client?.request || !requestedId) throw new Error('A stored Hermes session id is required to resume.');
+  assertProfileSessionCapability(capabilities, profile);
+  const result = await client.request(
+    WS_METHODS.sessionResume,
+    withGatewayProfile({ session_id: requestedId }, profile),
+  );
+  assertGatewayProfileAck(result, profile);
+  const identity = remoteSessionIdentity(result, requestedId);
+  if (!identity.liveId || !identity.storedId) throw new Error('Dashboard did not return a live session id on resume.');
+  return { ...identity, result };
+}
+
+export async function establishGatewaySession({
+  client,
+  capabilities = {},
+  profile = '',
+  persistedSession = null,
+  persistedProfile = '',
+  createParams = {},
+} = {}) {
+  if (!client?.request) throw new Error('A Hermes gateway client is required.');
+  assertProfileSessionCapability(capabilities, profile);
+  const persistedId = String(persistedSession?.id || '').trim();
+  const selectedProfile = String(profile || '').trim();
+  const ownedProfile = String(persistedProfile || '').trim();
+  const canResume = Boolean(persistedId && (selectedProfile ? ownedProfile === selectedProfile : !ownedProfile));
+  if (canResume) {
+    const resumed = await resumeGatewaySession({
+      client,
+      storedSessionId: persistedId,
+      profile: selectedProfile,
+      capabilities,
+    });
+    return { action: 'resumed', ...resumed };
+  }
+  const result = await client.request(
+    WS_METHODS.sessionCreate,
+    withGatewayProfile(createParams, selectedProfile),
+  );
+  assertGatewayProfileAck(result, selectedProfile);
+  const identity = remoteSessionIdentity(result);
+  if (!identity.liveId || !identity.storedId) throw new Error('Dashboard did not return a session id.');
+  return { action: 'created', ...identity, result };
+}
+
+export function reanchorRemoteSessionBindings({
+  fromId = '',
+  toId = '',
+  remoteSessionBindings = {},
+  sessionModelBindings = {},
+  sessionModelOptionBindings = {},
+} = {}) {
+  const previousId = String(fromId || '').trim();
+  const nextId = String(toId || '').trim();
+  if (!previousId || !nextId || previousId === nextId) {
+    return { remoteSessionBindings, sessionModelBindings, sessionModelOptionBindings };
+  }
+  const nextModelBindings = { ...(sessionModelBindings || {}) };
+  const nextOptionBindings = { ...(sessionModelOptionBindings || {}) };
+  if (nextModelBindings[previousId]) nextModelBindings[nextId] = nextModelBindings[previousId];
+  if (nextOptionBindings[previousId]) nextOptionBindings[nextId] = nextOptionBindings[previousId];
+  delete nextModelBindings[previousId];
+  delete nextOptionBindings[previousId];
+  return {
+    remoteSessionBindings: forgetRemoteSessionBinding(remoteSessionBindings, previousId),
+    sessionModelBindings: nextModelBindings,
+    sessionModelOptionBindings: nextOptionBindings,
+  };
+}
+
 // Capability gate, checked BEFORE any profile-scoped session RPC is sent.
 // Gateways that support profile-scoped sessions advertise
 // `capabilities.session_profiles` on the gateway.ready event; legacy gateways

@@ -7,10 +7,12 @@ import {
   buildDashboardWsUrl,
   classifyGatewayFrame,
   createGatewayClient,
+  establishGatewaySession,
   forgetRemoteSessionBinding,
   mergeRemoteSessionsForProfile,
   normalizeRemoteSessionBindings,
   rememberRemoteSessionBinding,
+  reanchorRemoteSessionBindings,
   remoteSessionIdentity,
   resolveVerifiedGatewayProfile,
   sessionProfileForGateway,
@@ -96,6 +98,95 @@ test('remoteSessionIdentity keeps live and stored session ids distinct across cr
   assert.deepEqual(remoteSessionIdentity({ session_id: 'live-4' }, 'requested-x'), { liveId: 'live-4', storedId: 'requested-x' });
   assert.deepEqual(remoteSessionIdentity({ session_id: 'live-5' }), { liveId: 'live-5', storedId: 'live-5' });
   assert.deepEqual(remoteSessionIdentity({}), { liveId: '', storedId: '' });
+});
+
+test('socket replacement coordinator resumes the durable profile session before the next prompt', async () => {
+  const firstClient = createGatewayClient({ WebSocketImpl: FakeWebSocket });
+  const firstConnecting = firstClient.connect('wss://host/api/ws?ticket=first');
+  const firstSocket = FakeWebSocket.last;
+  firstSocket._open();
+  firstSocket._message({
+    jsonrpc: '2.0',
+    method: 'event',
+    params: { type: 'gateway.ready', payload: { capabilities: { session_profiles: true } } },
+  });
+  await firstConnecting;
+  const createPending = establishGatewaySession({
+    client: firstClient,
+    capabilities: { session_profiles: true },
+    profile: 'thanos',
+    createParams: { title: 'A' },
+  });
+  const createFrame = JSON.parse(firstSocket.sent.at(-1));
+  firstSocket._message({
+    jsonrpc: '2.0',
+    id: createFrame.id,
+    result: { session_id: 'live-A', stored_session_id: 'stored-A', profile: 'thanos' },
+  });
+  const created = await createPending;
+  assert.deepEqual({ action: created.action, liveId: created.liveId, storedId: created.storedId }, {
+    action: 'created', liveId: 'live-A', storedId: 'stored-A',
+  });
+  firstClient.close();
+
+  const replacementClient = createGatewayClient({ WebSocketImpl: FakeWebSocket });
+  const replacementConnecting = replacementClient.connect('wss://host/api/ws?ticket=second');
+  const replacementSocket = FakeWebSocket.last;
+  replacementSocket._open();
+  replacementSocket._message({
+    jsonrpc: '2.0',
+    method: 'event',
+    params: { type: 'gateway.ready', payload: { capabilities: { session_profiles: true } } },
+  });
+  await replacementConnecting;
+
+  const resumePending = establishGatewaySession({
+    client: replacementClient,
+    capabilities: { session_profiles: true },
+    profile: 'thanos',
+    persistedSession: { id: created.storedId },
+    persistedProfile: 'thanos',
+    createParams: { title: 'must-not-create' },
+  });
+  const resumeFrame = JSON.parse(replacementSocket.sent.at(-1));
+  assert.equal(resumeFrame.method, WS_METHODS.sessionResume);
+  assert.deepEqual(resumeFrame.params, { session_id: 'stored-A', profile: 'thanos' });
+  replacementSocket._message({
+    jsonrpc: '2.0',
+    id: resumeFrame.id,
+    result: { session_id: 'live-B', resumed: 'stored-B', session_key: 'stored-B', profile: 'thanos' },
+  });
+  const resumed = await resumePending;
+  assert.deepEqual({ action: resumed.action, liveId: resumed.liveId, storedId: resumed.storedId }, {
+    action: 'resumed', liveId: 'live-B', storedId: 'stored-B',
+  });
+
+  const reanchored = reanchorRemoteSessionBindings({
+    fromId: 'stored-A',
+    toId: resumed.storedId,
+    remoteSessionBindings: {
+      'stored-A': { profile: 'thanos', gatewayUrl: 'https://host', title: 'A', updatedAt: 1 },
+    },
+    sessionModelBindings: { 'stored-A': { modelId: 'model-a' } },
+    sessionModelOptionBindings: { 'stored-A': { fastMode: true } },
+  });
+  assert.equal(reanchored.remoteSessionBindings['stored-A'], undefined);
+  assert.equal(reanchored.sessionModelBindings['stored-A'], undefined);
+  assert.deepEqual(reanchored.sessionModelBindings['stored-B'], { modelId: 'model-a' });
+  assert.equal(reanchored.sessionModelOptionBindings['stored-A'], undefined);
+  assert.deepEqual(reanchored.sessionModelOptionBindings['stored-B'], { fastMode: true });
+
+  const promptPending = replacementClient.request(WS_METHODS.promptSubmit, {
+    session_id: resumed.liveId,
+    text: 'continue',
+  });
+  const promptFrame = JSON.parse(replacementSocket.sent.at(-1));
+  assert.equal(promptFrame.method, WS_METHODS.promptSubmit);
+  assert.deepEqual(promptFrame.params, { session_id: 'live-B', text: 'continue' });
+  assert.equal(replacementSocket.sent.map((raw) => JSON.parse(raw).method).filter((method) => method === WS_METHODS.sessionCreate).length, 0);
+  replacementSocket._message({ jsonrpc: '2.0', id: promptFrame.id, result: { accepted: true } });
+  await promptPending;
+  replacementClient.close();
 });
 
 test('assertGatewayProfileAck fails closed on missing or mismatched effective profile', () => {

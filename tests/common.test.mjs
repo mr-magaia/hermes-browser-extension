@@ -1002,6 +1002,10 @@ test('connect and startup sync Hermes models, sessions, skills, and profiles fro
   // Reusing an already-verified session must not require live profile
   // re-discovery; only the create path re-verifies.
   assert.match(source, /if \(connection\.wsProfile === selected\) return connection\.wsSessionId;/);
+  assert.match(source, /const established = await establishGatewaySession\(\{/);
+  assert.match(source, /persistedSession,\s*persistedProfile,/s);
+  assert.match(source, /if \(action === 'resumed'\) \{/);
+  assert.match(source, /return liveId;\s*\}\s*connection\.wsSessionId = liveId;/s);
   // Live vs stored session identity: create/resume adopt the durable stored id
   // into settings/menus/bindings, keep the transport id on the connection, and
   // live RPCs (history) use the live id. The profile ack is checked BEFORE the
@@ -1016,7 +1020,7 @@ test('connect and startup sync Hermes models, sessions, skills, and profiles fro
   // before any RPC can run. Re-anchored resumes drop the stale binding.
   assert.match(source, /await assertRemoteProfileSessionSupport\(connection, profile\);\s*const result = await connection\.client\.request\(WS_METHODS\.sessionCreate/s);
   assert.match(source, /await assertRemoteProfileSessionSupport\(connection, sessionProfile\);\s*const result = await connection\.client\.request\(\s*WS_METHODS\.sessionResume/s);
-  assert.match(source, /await assertRemoteProfileSessionSupport\(connection, profile\);\s*const binding = currentEffectiveModelBinding\(\);/s);
+  assert.match(source, /await assertRemoteProfileSessionSupport\(connection, profile\);\s*const persistedSessionId = String\(settings\.sessionId \|\| ''\)\.trim\(\);/s);
   assert.match(source, /readyPayload = await client\.connect\(wsUrl\);/);
   assert.match(source, /capabilities: \(readyPayload && typeof readyPayload\.capabilities === 'object' && readyPayload\.capabilities\) \|\| \{\}/);
   assert.match(source, /forgetRemoteSessionBinding\(settings\.remoteSessionBindings, session\.id\)/);
