@@ -89,13 +89,14 @@ export async function establishGatewaySession({
   client,
   capabilities = {},
   profile = '',
+  storedSessionId = '',
   persistedSession = null,
   persistedProfile = '',
   createParams = {},
 } = {}) {
   if (!client?.request) throw new Error('A Hermes gateway client is required.');
   assertProfileSessionCapability(capabilities, profile);
-  const persistedId = String(persistedSession?.id || '').trim();
+  const persistedId = String(persistedSession?.id || storedSessionId || '').trim();
   const selectedProfile = String(profile || '').trim();
   const ownedProfile = String(persistedProfile || '').trim();
   const canResume = Boolean(persistedId && (selectedProfile ? ownedProfile === selectedProfile : !ownedProfile));
@@ -106,7 +107,7 @@ export async function establishGatewaySession({
       profile: selectedProfile,
       capabilities,
     });
-    return { action: 'resumed', ...resumed };
+    return { action: 'resumed', liveId: resumed.liveId, storedId: resumed.storedId };
   }
   const result = await client.request(
     WS_METHODS.sessionCreate,
@@ -115,7 +116,7 @@ export async function establishGatewaySession({
   assertGatewayProfileAck(result, selectedProfile);
   const identity = remoteSessionIdentity(result);
   if (!identity.liveId || !identity.storedId) throw new Error('Dashboard did not return a session id.');
-  return { action: 'created', ...identity, result };
+  return { action: 'created', ...identity };
 }
 
 export function reanchorRemoteSessionBindings({
@@ -266,6 +267,26 @@ export function mergeRemoteSessionsForProfile({ listedSessions = [], bindings = 
   }
 
   return [...merged.values()].sort((a, b) => Number(b.lastActive || 0) - Number(a.lastActive || 0));
+}
+
+function comparableGatewayUrl(value = '') {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+export function remoteStoredSessionIdForGateway(binding, gatewayUrl = '') {
+  const storedSessionId = String(binding?.storedSessionId || '').trim();
+  const boundGatewayUrl = comparableGatewayUrl(binding?.gatewayUrl);
+  const currentGatewayUrl = comparableGatewayUrl(gatewayUrl);
+  if (!storedSessionId || !boundGatewayUrl || boundGatewayUrl !== currentGatewayUrl) return '';
+  return storedSessionId;
 }
 
 export function buildDashboardWsUrl(baseUrl, ticket) {

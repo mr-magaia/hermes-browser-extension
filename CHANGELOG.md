@@ -1,15 +1,61 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+### Added
 
 - Added profile discovery for signed-in remote dashboard mode through a fixed, read-only first-party `/api/profiles` request.
-- Passed a reverified Browser profile selection to new dashboard WebSocket session requests, retained that binding for safe resume, and failed closed when an explicit selection could not be reverified. Detect mode keeps the launch-profile fallback and stores no API key.
-- Tracked dashboard sessions by their durable `stored_session_id` while using the per-socket live id for history, prompt, steer, and interrupt calls, so resumed sessions keep working after the socket is replaced.
-- Required the dashboard to echo the effective profile on `session.create`/`session.resume` before adopting an explicitly scoped session, closing the discovery-to-create race where a deleted profile silently resolved to the launch scope.
-- Gated profile-scoped session RPCs on a `session_profiles` capability advertised on `gateway.ready`, so legacy dashboards never receive (and never mis-scope) a profile-scoped create/resume; the profile picker says when profiles can be listed but profile-scoped sessions are unsupported.
-- Dropped the stale session binding and menu row when a resume re-anchors to a compression descendant key.
+- Passed a reverified Browser profile selection to dashboard WebSocket create/resume requests and retained gateway-scoped bindings for safe reconnects.
+- Gated profile-scoped session RPCs on the `session_profiles` gateway capability and required an effective-profile acknowledgement before adopting the session.
 
-## v0.1.10 — 2026-07-07
+### Fixed
+
+- Preserved remote dashboard conversations across WebSocket replacement by persisting the gateway's durable session identity, resuming it on reconnect, and routing follow-up RPCs through the fresh live session identity.
+- Dropped stale session and model-option bindings when a resume re-anchors to a compression descendant key.
+- Added a browser-agnostic confirmation gate for side-panel opens so Chromium forks that silently no-op can fall back to a working extension tab without duplicating tabs when a native panel actually opens.
+
+### Contributors
+
+- Folded and hardened the session-identity foundation from [PR #35](https://github.com/abundantbeing/hermes-browser-extension/pull/35) by [@mr-magaia](https://github.com/mr-magaia); profile selection remains capability-gated until official Hermes advertises and enforces the server contract.
+- Credited [@chinnsenn](https://github.com/chinnsenn) for the Arc compatibility report in [issue #37](https://github.com/abundantbeing/hermes-browser-extension/issues/37).
+
+## [0.1.11] - 2026-07-13
+
+### Added
+
+- Added **Hermes Web Alpha**, a full-page browser workspace backed by canonical Hermes sessions, with a session rail, user-right/Hermes-left messages, safe rich Markdown, model/runtime controls, tools, skills, attachments, voice, active-run steering, generated media, and context/activity inspection.
+- Added three explicit connection modes: **Local gateway**, **Hermes Cloud Preview**, and **Remote gateway**, with deterministic dispatch, migration, validation, and mode-specific settings copy.
+- Added trusted signed-in Hermes Cloud agent-tab attachment through a one-use ticket transport with Chat-only browser context.
+- Added nine Light/Dark themes across the side panel and Hermes Web: Nous, Midnight, Ember, Mono, Cyberpunk, Slate, Senter Space, Aphrodite, and Solstice.
+- Added generated-image diffusion reveal plus a lightbox with zoom, reset, open, and explicit download controls.
+- Added accurate context-window and compaction telemetry, compact context chips, payload breakdowns, capability fallbacks, and session-gated runtime accounting.
+- Added Firefox preview packaging through `npm run build:firefox` and Opera sidebar support.
+- Added a scoped element picker for explicit page-element context.
+- Added refreshed README visual-tour assets for the current side panel, all nine themes, and three Hermes Web states.
+
+### Changed
+
+- Bound model, provider, reasoning effort, skills, and other runtime options to the active browser session rather than mutating Hermes global defaults.
+- Preserved the canonical model catalog across partial gateway updates and hardened backend-acknowledged model locking.
+- Improved canonical session continuity, source metadata, context persistence, and duplicate-turn retry prevention across side-panel and Hermes Web surfaces.
+- Refined the side-panel header, logo, icon placement, composer controls, connection diagnostics, and runtime/context footer.
+- Expanded generated-media rendering, artifact discovery, voice-dictation fallback behavior, and final-image completion handling.
+- Updated Local, Cloud Preview, Remote, privacy, permission, security, data-flow, compatibility, and troubleshooting documentation.
+
+### Security
+
+- Added one shared decoded credential-URL policy for active, selected, open-tab, pinned-scope, prompt, receipt, and payload-hash surfaces.
+- Omitted common API keys, tokens, client secrets, private keys, credentials, signatures, and signed-URL fields even when parameter names are nested or encoded.
+- Hardened trusted Cloud dashboard attachment, remote session authentication diagnostics, secret redaction, sealed-token URL handling, and restricted browser-context summaries.
+- Kept browser interaction read-only: no click, type, form-submit, checkout, debugger, native-messaging, cookie, history, bookmark, or browser-control permissions.
+
+### Fixed
+
+- Fixed companion-plugin browser-context detection when Hermes user-message content is represented as OpenAI-style content arrays.
+- Fixed generated-image completion, session model/context alignment, runtime-option persistence, and duplicate browser-turn retries.
+- Fixed element-picker icon consistency and star-history chart URLs with encoded repository paths and sealed tokens.
+
+## [0.1.10] - 2026-07-07
 
 ### Release theme
 - Supportability and integration bridge release: read-only foundation, Browser Context Protocol receipts, sanitized context cache, session control, and Browser-scoped model selection.

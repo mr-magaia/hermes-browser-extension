@@ -7,6 +7,7 @@ import {
 import {
   detectBrowserId,
   openNativeSidebar,
+  openSidePanelWithConfirmation,
   setActionClickPanelBehavior as setPanelBehaviorForBrowser,
 } from './lib/browser-runtime.mjs';
 import {
@@ -117,6 +118,7 @@ async function openHermesPanel(tab) {
     tabId: useTabAttached ? tabId : null,
     defaultPath: defaultPanelPath,
   });
+  const panelUrl = chrome.runtime.getURL(panelPath);
 
   // Try Opera/Firefox native sidebar first.
   const opened = await openNativeSidebar({ windowId: tab?.windowId ?? null });
@@ -131,21 +133,37 @@ async function openHermesPanel(tab) {
       await applyPanelResidencyMode(panelResidencyMode, { tabId: useTabAttached ? tabId : null });
       if (useTabAttached) {
         try {
-          await chrome.sidePanel.open({ tabId });
-          return;
+          const panelOpened = await openSidePanelWithConfirmation({
+            sidePanelApi: chrome.sidePanel,
+            runtimeApi: chrome.runtime,
+            openOptions: { tabId },
+            panelUrl,
+          });
+          if (panelOpened) return;
         } catch (tabOpenError) {
           if (!tab?.windowId) throw tabOpenError;
           const { windowId } = tab;
           console.warn('[Hermes Browser] Tab side panel open failed, retrying window side panel:', tabOpenError);
-          await chrome.sidePanel.open({ windowId });
-          return;
+          const panelOpened = await openSidePanelWithConfirmation({
+            sidePanelApi: chrome.sidePanel,
+            runtimeApi: chrome.runtime,
+            openOptions: { windowId },
+            panelUrl,
+          });
+          if (panelOpened) return;
         }
       }
       if (tab?.windowId) {
         const { windowId } = tab;
-        await chrome.sidePanel.open({ windowId });
-        return;
+        const panelOpened = await openSidePanelWithConfirmation({
+          sidePanelApi: chrome.sidePanel,
+          runtimeApi: chrome.runtime,
+          openOptions: { windowId },
+          panelUrl,
+        });
+        if (panelOpened) return;
       }
+      console.warn('[Hermes Browser] Side panel open was not confirmed; using the extension fallback.');
     }
   } catch (error) {
     console.warn('[Hermes Browser] Side panel open failed:', error);
@@ -172,6 +190,18 @@ async function openHermesPanel(tab) {
 
   // Last resort: open as extension tab
   await chrome.tabs.create({ url: chrome.runtime.getURL(panelPath) });
+}
+
+async function openHermesFullView(requestedUrl = '') {
+  const packagedAppUrl = new URL(chrome.runtime.getURL('app.html'));
+  const rootDevAppUrl = new URL(chrome.runtime.getURL('extension/app.html'));
+  const targetUrl = new URL(String(requestedUrl || packagedAppUrl.href));
+  const allowedPaths = new Set([packagedAppUrl.pathname, rootDevAppUrl.pathname]);
+  if (targetUrl.origin !== packagedAppUrl.origin || !allowedPaths.has(targetUrl.pathname)) {
+    throw new Error('Refused to open a non-Hermes full-view URL.');
+  }
+  await chrome.tabs.create({ url: targetUrl.href, active: true });
+  return { ok: true };
 }
 
 function timeoutSignal(ms = 5000) {
@@ -286,8 +316,13 @@ chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
   }
 });
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== 'HERMES_GET_YOUTUBE_TRANSCRIPT') return false;
-  getYoutubeTranscript(message)
+  const action = message?.type === 'HERMES_OPEN_FULL_VIEW'
+    ? openHermesFullView(message.url)
+    : message?.type === 'HERMES_GET_YOUTUBE_TRANSCRIPT'
+      ? getYoutubeTranscript(message)
+      : null;
+  if (!action) return false;
+  action
     .then(sendResponse)
     .catch((error) => sendResponse({ ok: false, reason: error?.message || String(error) }));
   return true;

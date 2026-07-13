@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   assertGatewayProfileAck,
@@ -15,6 +16,7 @@ import {
   reanchorRemoteSessionBindings,
   remoteSessionIdentity,
   resolveVerifiedGatewayProfile,
+  remoteStoredSessionIdForGateway,
   sessionProfileForGateway,
   withGatewayProfile,
   WS_METHODS,
@@ -340,6 +342,25 @@ test('remote session bindings preserve profile ownership and isolate session men
       .map((session) => session.id),
     ['thanos-session'],
   );
+});
+
+test('remote stored session bindings never cross dashboard origins', () => {
+  const binding = {
+    storedSessionId: 'stored-A',
+    gatewayUrl: 'https://one.example/hermes/',
+  };
+  assert.equal(remoteStoredSessionIdForGateway(binding, 'https://one.example/hermes'), 'stored-A');
+  assert.equal(remoteStoredSessionIdForGateway(binding, 'https://two.example/hermes'), '');
+  assert.equal(remoteStoredSessionIdForGateway({ ...binding, storedSessionId: '' }, 'https://one.example/hermes'), '');
+  assert.equal(remoteStoredSessionIdForGateway(null, 'https://one.example/hermes'), '');
+});
+
+test('sidepanel reconnect wiring persists the durable id and resumes only on the bound dashboard', () => {
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  assert.match(source, /remoteStoredSessionIdForGateway\(settings\.remoteDashboardSession, connection\.baseUrl\)/);
+  assert.match(source, /establishGatewaySession\(\{[\s\S]*?persistedSession,[\s\S]*?persistedProfile,[\s\S]*?createParams:/);
+  assert.match(source, /remoteDashboardSession:\s*\{[\s\S]*?storedSessionId:\s*storedId,[\s\S]*?gatewayUrl:\s*connection\.baseUrl/);
+  assert.match(source, /connection\.wsStoredSessionId\s*=\s*storedId/);
 });
 
 test('classifyGatewayFrame distinguishes responses, errors, events, and noise', () => {
